@@ -7,6 +7,7 @@ Fetches 92 top HN blogs via RSS, summarizes with Claude, generates PDF, emails i
 import os
 import sys
 import json
+import time
 import smtplib
 import feedparser
 import anthropic
@@ -27,15 +28,21 @@ from reportlab.platypus import (
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 # ============================================================
-# CONFIG
+# CONFIG (auto-strip whitespace/newlines from secrets)
 # ============================================================
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-GMAIL_USER = os.environ.get("GMAIL_USER", "")
-GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
-RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL", GMAIL_USER)
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+GMAIL_USER = os.environ.get("GMAIL_USER", "").strip()
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "").strip()
+RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL", "").strip() or GMAIL_USER
 LOOKBACK_HOURS = int(os.environ.get("LOOKBACK_HOURS", "24"))
 MAX_ARTICLES = int(os.environ.get("MAX_ARTICLES", "30"))  # cap to control cost
 MODEL = os.environ.get("MODEL", "claude-sonnet-4-20250514")
+
+# Debug: print masked key info
+if ANTHROPIC_API_KEY:
+    print(f"[DEBUG] API Key loaded: {ANTHROPIC_API_KEY[:10]}...{ANTHROPIC_API_KEY[-4:]} (length={len(ANTHROPIC_API_KEY)})")
+else:
+    print("[ERROR] ANTHROPIC_API_KEY is empty!")
 
 # All 92 feeds from Karpathy's recommendation
 FEEDS = [
@@ -193,7 +200,7 @@ def fetch_all_feeds():
 
 
 # ============================================================
-# 2. SUMMARIZE WITH CLAUDE
+# 2. SUMMARIZE WITH CLAUDE (with retry)
 # ============================================================
 def summarize_articles(articles):
     """Use Claude to generate a structured daily digest."""
@@ -239,13 +246,29 @@ For each article include the source name and a one-sentence summary.
 Keep the total under 3000 words.
 Language: Write primarily in English, but add brief Chinese annotations (用中文简注) for the most important 3-5 articles to help bilingual readers."""
 
-    print("Summarizing with Claude...")
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=4000,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.content[0].text
+    # Retry up to 3 times
+    for attempt in range(3):
+        try:
+            print(f"Summarizing with Claude (attempt {attempt + 1}/3)...")
+            response = client.messages.create(
+                model=MODEL,
+                max_tokens=4000,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.content[0].text
+        except anthropic.AuthenticationError as e:
+            print(f"[ERROR] Authentication failed: {e}")
+            print(f"[DEBUG] Key starts with: {ANTHROPIC_API_KEY[:12]}...")
+            print("[HINT] Please check your ANTHROPIC_API_KEY secret in GitHub Settings.")
+            raise
+        except (anthropic.APIConnectionError, anthropic.RateLimitError) as e:
+            print(f"[WARN] Attempt {attempt + 1} failed: {e}")
+            if attempt < 2:
+                wait = 10 * (attempt + 1)
+                print(f"  Retrying in {wait}s...")
+                time.sleep(wait)
+            else:
+                raise
 
 
 # ============================================================
