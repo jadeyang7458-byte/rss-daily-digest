@@ -32,10 +32,10 @@ jobs:
           MAX_ARTICLES: "30"
         run: python digest.py
 
-      - name: Upload PDF artifact
+      - name: Upload HTML artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: digest-${{ github.run_id }}
-          path: "*.pdf"
+          path: "*.html"
           retention-days: 7
