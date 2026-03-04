@@ -260,9 +260,20 @@ Rules:
             print(f"Summarizing with Claude (attempt {attempt + 1}/3)...")
             response = client.messages.create(
                 model=MODEL,
-                max_tokens=4000,
+                max_tokens=16000,
                 messages=[{"role": "user", "content": prompt}],
             )
+
+            # Check if response was truncated due to token limit
+            if response.stop_reason == "max_tokens":
+                print(f"[WARN] Response truncated at max_tokens (attempt {attempt + 1})")
+                if attempt < 2:
+                    print("  Retrying...")
+                    time.sleep(5)
+                    continue
+                else:
+                    raise RuntimeError("Claude response was truncated after 3 attempts. Try reducing MAX_ARTICLES.")
+
             text = response.content[0].text.strip()
             # Strip markdown code fences if present
             if text.startswith("```"):
